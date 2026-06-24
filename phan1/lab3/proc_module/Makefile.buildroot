@@ -1,0 +1,5 @@
+obj-m += proc_module.o
+all:
+	$(MAKE) -C /home/hop/buildroot/output/build/linux-5.10.7 M=$(PWD) ARCH=arm CROSS_COMPILE=/home/hop/buildroot/output/host/bin/arm-buildroot-linux-uclibcgnueabihf- modules
+clean:
+	$(MAKE) -C /home/hop/buildroot/output/build/linux-5.10.7 M=$(PWD) ARCH=arm CROSS_COMPILE=/home/hop/buildroot/output/host/bin/arm-buildroot-linux-uclibcgnueabihf- clean

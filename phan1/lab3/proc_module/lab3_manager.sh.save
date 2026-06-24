@@ -1,0 +1,148 @@
+#!/bin/bash
+
+# ============================================================
+# lab3_manager.sh - Giao diện quản lý Lab3 (kernel module)
+# Thư mục: ~/lapTrinhNhanLinux/project/phan1/lab3
+# ============================================================
+
+# Hàm kiểm tra module đã load chưa
+is_loaded() {
+    local modname="$1"
+    lsmod | grep -q "^$modname"
+}
+
+# Hàm biên dịch module
+build_module() {
+    local dir="$1"
+    local name="$2"
+    if [ ! -d "$dir" ]; then
+        whiptail --msgbox "Thư mục $dir không tồn tại!" 8 60
+        return 1
+    fi
+    cd "$dir" || return 1
+    make clean 2>/dev/null
+    if make; then
+        whiptail --msgbox "✅ Biên dịch $name thành công!" 8 60
+        return 0
+    else
+        whiptail --msgbox "❌ Biên dịch $name thất bại. Kiểm tra lỗi." 8 60
+        return 1
+    fi
+}
+
+# Hàm load module
+load_module() {
+    local dir="$1"
+    local modname="$2"
+    local ko_file="$dir/$modname.ko"
+    if [ ! -f "$ko_file" ]; then
+        whiptail --msgbox "File $ko_file không tồn tại. Hãy biên dịch trước." 8 60
+        return 1
+    fi
+    if is_loaded "$modname"; then
+        whiptail --msgbox "Module $modname đã được load." 8 40
+        return 0
+    fi
+    sudo insmod "$ko_file" 2>&1 | tee /tmp/insmod.log
+    if [
+$? -eq 0 ]; then
+        whiptail --msgbox "✅ Load module $modname thành công." 8 40
+        return 0
+    else
+        whiptail --msgbox "❌ Load module thất bại.\nXem log: /tmp/insmod.log" 10 60
+        return 1
+    fi
+}
+
+# Hàm unload module
+unload_module() {
+    local modname="$1"
+    if ! is_loaded "$modname"; then
+        whiptail --msgbox "Module $modname chưa được load." 8 40
+        return 0
+    fi
+    sudo rmmod "$modname" 2>&1 | tee /tmp/rmmod.log
+    if [ $? -eq 0 ]; then
+        whiptail --msgbox "✅ Unload module $modname thành công." 8 40
+        return 0
+    else
+        whiptail --msgbox "❌ Unload thất bại.\nXem log: /tmp/rmmod.log" 10 60
+        return 1
+    fi
+}
+
+# Hàm xem dmesg
+view_dmesg() {
+    dmesg | tail -30 > /tmp/dmesg.log
+    whiptail --textbox /tmp/dmesg.log 20 80 --title "Kernel log (30 dòng gần nhất)"
+}
+
+# Hàm kiểm tra /proc/mymodule
+test_proc_module() {
+    if ! is_loaded "proc_module"; then
+        whiptail --msgbox "Module proc_module chưa được load. Hãy load trước." 8 40
+        return 1
+    fi
+    if [ ! -f /proc/mymodule ]; then
+        whiptail --msgbox "File /proc/mymodule không tồn tại. Module có thể chưa tạo đúng." 8 50
+        return 1
+    fi
+    # Đọc nội dung hiện tại
+    current=$(cat /proc/mymodule 2>/dev/null)
+    whiptail --msgbox "Nội dung hiện tại của /proc/mymodule:\n$current" 12 60
+    
+    # Hỏi ghi nội dung mới?
+    if whiptail --yesno "Bạn có muốn ghi nội dung mới vào /proc/mymodule không?" 10 60; then
+        new_msg=$(whiptail --inputbox "Nhập tin nhắn mới:" 8 60 "Hello from userspace" --title "Ghi vào /proc/mymodule" 3>&1 1>&2 2>&3)
+        if [ -n "$new_msg" ]; then
+            echo "$new_msg" | sudo tee /proc/mymodule > /dev/null
+            if [ $? -eq 0 ]; then
+                updated=$(cat /proc/mymodule 2>/dev/null)
+                whiptail --msgbox "✅ Ghi thành công.\nNội dung mới:\n$updated" 12 60
+            else
+                whiptail --msgbox "❌ Ghi thất bại." 8 40
+            fi
+        fi
+    fi
+}
+
+# Menu chính
+main_menu() {
+    while true; do
+        choice=$(whiptail --title "QUẢN LÝ LAB 3 - KERNEL MODULE" \
+            --menu "Chọn thao tác:" 20 70 12 \
+            "1" "Biên dịch hello_module" \
+            "2" "Biên dịch proc_module" \
+            "3" "Load hello_module" \
+            "4" "Unload hello_module" \
+            "5" "Load proc_module" \
+            "6" "Unload proc_module" \
+            "7" "Xem kernel log (dmesg)" \
+            "8" "Kiểm tra /proc/mymodule (proc_module)" \
+            "9" "Xem trạng thái module (lsmod)" \
+            "0" "Thoát" 3>&1 1>&2 2>&3)
+        
+        case $choice in
+            1) build_module "hello_module" "hello" ;;
+            2) build_module "proc_module" "proc_module" ;;
+            3) load_module "hello_module" "hello" ;;
+            4) unload_module "hello" ;;
+            5) load_module "proc_module" "proc_module" ;;
+            6) unload_module "proc_module" ;;
+            7) view_dmesg ;;
+            8) test_proc_module ;;
+            9) 
+                lsmod > /tmp/lsmod.log
+                whiptail --textbox /tmp/lsmod.log 20 80 --title "Danh sách module đã load"
+                ;;
+            0) 
+                whiptail --msgbox "Cảm ơn bạn đã sử dụng!" 8 40
+                exit 0
+                ;;
+            *) whiptail --msgbox "Lựa chọn không hợp lệ!" 8 40 ;;
+        esac
+    done
+}
+
+# ==================== BẮT ĐẦU ====================
+main_menu
