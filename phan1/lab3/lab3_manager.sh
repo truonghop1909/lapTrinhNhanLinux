@@ -3,14 +3,14 @@
 # ============================================================
 # lab3_manager.sh - Giao diện quản lý Lab3 (kernel module)
 # Thư mục: ~/lapTrinhNhanLinux/project/phan1/lab3
-# Chỉ dành cho host (Ubuntu x86_64)
-# Thêm chức năng mã hóa/giải mã file
+# Hỗ trợ: hello_module, proc_module, crypto_module (XOR)
 # ============================================================
 
 # Đường dẫn tuyệt đối
 LAB3_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELLO_DIR="$LAB3_DIR/hello_module"
 PROC_DIR="$LAB3_DIR/proc_module"
+CRYPTO_DIR="$LAB3_DIR/crypto_module"
 
 # Kiểm tra thư mục
 if [ ! -d "$HELLO_DIR" ]; then
@@ -21,8 +21,12 @@ if [ ! -d "$PROC_DIR" ]; then
     whiptail --msgbox "Thư mục proc_module không tồn tại!" 8 60
     exit 1
 fi
+if [ ! -d "$CRYPTO_DIR" ]; then
+    whiptail --msgbox "Thư mục crypto_module không tồn tại!" 8 60
+    exit 1
+fi
 
-# Kiểm tra openssl
+# Hàm kiểm tra openssl (cho mã hóa/giải mã file)
 check_openssl() {
     if ! command -v openssl &> /dev/null; then
         whiptail --msgbox "openssl chưa được cài đặt. Vui lòng cài: sudo apt install openssl" 8 60
@@ -141,6 +145,36 @@ test_proc_module() {
     fi
 }
 
+# Hàm kiểm tra /proc/xor (crypto_module)
+test_xor_module() {
+    if ! is_loaded "crypto_module"; then
+        whiptail --msgbox "Module crypto_module chưa được load. Hãy load trước." 8 40
+        return 1
+    fi
+    if [ ! -f /proc/xor ]; then
+        whiptail --msgbox "File /proc/xor không tồn tại. Module có thể chưa tạo đúng." 8 50
+        return 1
+    fi
+    
+    # Đọc nội dung hiện tại
+    current=$(cat /proc/xor 2>/dev/null)
+    whiptail --msgbox "Nội dung hiện tại của /proc/xor:\n$current" 12 60
+    
+    # Hỏi ghi nội dung mới?
+    if whiptail --yesno "Bạn có muốn ghi nội dung mới vào /proc/xor (mã hóa tự động)?" 10 60; then
+        new_msg=$(whiptail --inputbox "Nhập tin nhắn mới:" 8 60 "Hello XOR" --title "Ghi vào /proc/xor" 3>&1 1>&2 2>&3)
+        if [ -n "$new_msg" ]; then
+            echo "$new_msg" > /proc/xor
+            if [ $? -eq 0 ]; then
+                updated=$(cat /proc/xor 2>/dev/null)
+                whiptail --msgbox "✅ Ghi thành công (đã mã hóa).\nNội dung giải mã khi đọc:\n$updated" 12 60
+            else
+                whiptail --msgbox "❌ Ghi thất bại." 8 40
+            fi
+        fi
+    fi
+}
+
 # Hàm xem thông tin module (modinfo)
 view_modinfo() {
     local dir="$1"
@@ -154,9 +188,8 @@ view_modinfo() {
     whiptail --textbox /tmp/modinfo.log 20 80 --title "Thông tin module $modname"
 }
 
-# ==================== CHỨC NĂNG MÃ HÓA/GIẢI MÃ ====================
+# ==================== CHỨC NĂNG MÃ HÓA/GIẢI MÃ FILE (OPENSSL) ====================
 
-# Hàm mã hóa file
 encrypt_file() {
     check_openssl || return 1
     
@@ -173,7 +206,6 @@ encrypt_file() {
     local password=$(whiptail --passwordbox "Nhập mật khẩu mã hóa:" 8 60 --title "Mật khẩu" 3>&1 1>&2 2>&3)
     [ -z "$password" ] && return
     
-    # Mã hóa với AES-256-CBC, salt và PBKDF2
     openssl enc -aes-256-cbc -salt -pbkdf2 -in "$input_file" -out "$output_file" -pass pass:"$password" 2>/tmp/encrypt_error.log
     if [ $? -eq 0 ]; then
         whiptail --msgbox "✅ Mã hóa thành công!\nFile đầu ra: $output_file" 10 60
@@ -182,7 +214,6 @@ encrypt_file() {
     fi
 }
 
-# Hàm giải mã file
 decrypt_file() {
     check_openssl || return 1
     
@@ -199,7 +230,6 @@ decrypt_file() {
     local password=$(whiptail --passwordbox "Nhập mật khẩu giải mã:" 8 60 --title "Mật khẩu" 3>&1 1>&2 2>&3)
     [ -z "$password" ] && return
     
-    # Giải mã
     openssl enc -d -aes-256-cbc -salt -pbkdf2 -in "$input_file" -out "$output_file" -pass pass:"$password" 2>/tmp/decrypt_error.log
     if [ $? -eq 0 ]; then
         whiptail --msgbox "✅ Giải mã thành công!\nFile đầu ra: $output_file" 10 60
@@ -212,7 +242,7 @@ decrypt_file() {
 main_menu() {
     while true; do
         choice=$(whiptail --title "QUẢN LÝ LAB 3 - KERNEL MODULE (HOST)" \
-            --menu "Chọn thao tác:" 22 75 14 \
+            --menu "Chọn thao tác:" 24 80 18 \
             "1" "Biên dịch hello_module" \
             "2" "Biên dịch proc_module" \
             "3" "Load hello_module" \
@@ -227,6 +257,10 @@ main_menu() {
             "12" "Xem thông tin proc_module" \
             "13" "Mã hóa file (openssl)" \
             "14" "Giải mã file (openssl)" \
+            "15" "Biên dịch crypto_module (XOR)" \
+            "16" "Load crypto_module (XOR)" \
+            "17" "Unload crypto_module (XOR)" \
+            "18" "Kiểm tra /proc/xor (XOR)" \
             "0" "Thoát" 3>&1 1>&2 2>&3)
         
         case $choice in
@@ -247,6 +281,10 @@ main_menu() {
             12) view_modinfo "$PROC_DIR" "proc_module" ;;
             13) encrypt_file ;;
             14) decrypt_file ;;
+            15) build_module "$CRYPTO_DIR" "crypto_module" ;;
+            16) load_module "$CRYPTO_DIR" "crypto_module" ;;
+            17) unload_module "crypto_module" ;;
+            18) test_xor_module ;;
             0) 
                 whiptail --msgbox "Cảm ơn bạn đã sử dụng!" 8 40
                 exit 0
