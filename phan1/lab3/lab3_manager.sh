@@ -3,9 +3,11 @@
 # ============================================================
 # lab3_manager.sh - Giao diện quản lý Lab3 (kernel module)
 # Thư mục: ~/lapTrinhNhanLinux/project/phan1/lab3
+# Chỉ dành cho host (Ubuntu x86_64)
+# Thêm chức năng mã hóa/giải mã file
 # ============================================================
 
-# Đường dẫn tuyệt đối đến thư mục lab3
+# Đường dẫn tuyệt đối
 LAB3_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELLO_DIR="$LAB3_DIR/hello_module"
 PROC_DIR="$LAB3_DIR/proc_module"
@@ -19,6 +21,15 @@ if [ ! -d "$PROC_DIR" ]; then
     whiptail --msgbox "Thư mục proc_module không tồn tại!" 8 60
     exit 1
 fi
+
+# Kiểm tra openssl
+check_openssl() {
+    if ! command -v openssl &> /dev/null; then
+        whiptail --msgbox "openssl chưa được cài đặt. Vui lòng cài: sudo apt install openssl" 8 60
+        return 1
+    fi
+    return 0
+}
 
 # Hàm kiểm tra module đã load chưa
 is_loaded() {
@@ -40,7 +51,7 @@ build_module() {
         whiptail --msgbox "✅ Biên dịch $name thành công!" 8 60
         return 0
     else
-        whiptail --msgbox "❌ Biên dịch $name thất bại. Kiểm tra lỗi." 8 60
+        whiptail --msgbox "❌ Biên dịch $name thất bại." 8 60
         return 1
     fi
 }
@@ -91,6 +102,16 @@ view_dmesg() {
     whiptail --textbox /tmp/dmesg.log 20 80 --title "Kernel log (30 dòng gần nhất)"
 }
 
+# Hàm xóa dmesg (clear log)
+clear_dmesg() {
+    if whiptail --yesno "Bạn có chắc muốn xóa toàn bộ kernel log?" 8 60; then
+        sudo dmesg -c > /dev/null 2>&1
+        whiptail --msgbox "✅ Kernel log đã được xóa." 8 40
+    else
+        whiptail --msgbox "Hủy bỏ." 8 40
+    fi
+}
+
 # Hàm kiểm tra /proc/mymodule
 test_proc_module() {
     if ! is_loaded "proc_module"; then
@@ -120,20 +141,92 @@ test_proc_module() {
     fi
 }
 
-# Menu chính
+# Hàm xem thông tin module (modinfo)
+view_modinfo() {
+    local dir="$1"
+    local modname="$2"
+    local ko_file="$dir/$modname.ko"
+    if [ ! -f "$ko_file" ]; then
+        whiptail --msgbox "File $ko_file không tồn tại. Hãy biên dịch trước." 8 60
+        return 1
+    fi
+    modinfo "$ko_file" > /tmp/modinfo.log 2>&1
+    whiptail --textbox /tmp/modinfo.log 20 80 --title "Thông tin module $modname"
+}
+
+# ==================== CHỨC NĂNG MÃ HÓA/GIẢI MÃ ====================
+
+# Hàm mã hóa file
+encrypt_file() {
+    check_openssl || return 1
+    
+    local input_file=$(whiptail --inputbox "Nhập đường dẫn file cần mã hóa:" 8 60 --title "Mã hóa file" 3>&1 1>&2 2>&3)
+    [ -z "$input_file" ] && return
+    if [ ! -f "$input_file" ]; then
+        whiptail --msgbox "File không tồn tại!" 8 40
+        return 1
+    fi
+    
+    local output_file=$(whiptail --inputbox "Nhập tên file đầu ra (mặc định: input_file.enc):" 8 60 "${input_file}.enc" --title "Mã hóa file" 3>&1 1>&2 2>&3)
+    [ -z "$output_file" ] && output_file="${input_file}.enc"
+    
+    local password=$(whiptail --passwordbox "Nhập mật khẩu mã hóa:" 8 60 --title "Mật khẩu" 3>&1 1>&2 2>&3)
+    [ -z "$password" ] && return
+    
+    # Mã hóa với AES-256-CBC, salt và PBKDF2
+    openssl enc -aes-256-cbc -salt -pbkdf2 -in "$input_file" -out "$output_file" -pass pass:"$password" 2>/tmp/encrypt_error.log
+    if [ $? -eq 0 ]; then
+        whiptail --msgbox "✅ Mã hóa thành công!\nFile đầu ra: $output_file" 10 60
+    else
+        whiptail --msgbox "❌ Mã hóa thất bại.\nXem log: /tmp/encrypt_error.log" 10 60
+    fi
+}
+
+# Hàm giải mã file
+decrypt_file() {
+    check_openssl || return 1
+    
+    local input_file=$(whiptail --inputbox "Nhập đường dẫn file cần giải mã:" 8 60 --title "Giải mã file" 3>&1 1>&2 2>&3)
+    [ -z "$input_file" ] && return
+    if [ ! -f "$input_file" ]; then
+        whiptail --msgbox "File không tồn tại!" 8 40
+        return 1
+    fi
+    
+    local output_file=$(whiptail --inputbox "Nhập tên file đầu ra (mặc định: input_file.dec):" 8 60 "${input_file%.enc}.dec" --title "Giải mã file" 3>&1 1>&2 2>&3)
+    [ -z "$output_file" ] && output_file="${input_file%.enc}.dec"
+    
+    local password=$(whiptail --passwordbox "Nhập mật khẩu giải mã:" 8 60 --title "Mật khẩu" 3>&1 1>&2 2>&3)
+    [ -z "$password" ] && return
+    
+    # Giải mã
+    openssl enc -d -aes-256-cbc -salt -pbkdf2 -in "$input_file" -out "$output_file" -pass pass:"$password" 2>/tmp/decrypt_error.log
+    if [ $? -eq 0 ]; then
+        whiptail --msgbox "✅ Giải mã thành công!\nFile đầu ra: $output_file" 10 60
+    else
+        whiptail --msgbox "❌ Giải mã thất bại. Sai mật khẩu hoặc file không đúng định dạng.\nXem log: /tmp/decrypt_error.log" 12 60
+    fi
+}
+
+# ==================== MENU CHÍNH ====================
 main_menu() {
     while true; do
-        choice=$(whiptail --title "QUẢN LÝ LAB 3 - KERNEL MODULE" \
-            --menu "Chọn thao tác:" 20 70 12 \
-            "1" "Biên dịch hello_module (host)" \
-            "2" "Biên dịch proc_module (host)" \
+        choice=$(whiptail --title "QUẢN LÝ LAB 3 - KERNEL MODULE (HOST)" \
+            --menu "Chọn thao tác:" 22 75 14 \
+            "1" "Biên dịch hello_module" \
+            "2" "Biên dịch proc_module" \
             "3" "Load hello_module" \
             "4" "Unload hello_module" \
             "5" "Load proc_module" \
             "6" "Unload proc_module" \
             "7" "Xem kernel log (dmesg)" \
-            "8" "Kiểm tra /proc/mymodule (proc_module)" \
-            "9" "Xem trạng thái module (lsmod)" \
+            "8" "Xóa kernel log (clear dmesg)" \
+            "9" "Kiểm tra /proc/mymodule" \
+            "10" "Xem trạng thái module (lsmod)" \
+            "11" "Xem thông tin hello_module" \
+            "12" "Xem thông tin proc_module" \
+            "13" "Mã hóa file (openssl)" \
+            "14" "Giải mã file (openssl)" \
             "0" "Thoát" 3>&1 1>&2 2>&3)
         
         case $choice in
@@ -144,11 +237,16 @@ main_menu() {
             5) load_module "$PROC_DIR" "proc_module" ;;
             6) unload_module "proc_module" ;;
             7) view_dmesg ;;
-            8) test_proc_module ;;
-            9) 
+            8) clear_dmesg ;;
+            9) test_proc_module ;;
+            10) 
                 lsmod > /tmp/lsmod.log
                 whiptail --textbox /tmp/lsmod.log 20 80 --title "Danh sách module đã load"
                 ;;
+            11) view_modinfo "$HELLO_DIR" "hello" ;;
+            12) view_modinfo "$PROC_DIR" "proc_module" ;;
+            13) encrypt_file ;;
+            14) decrypt_file ;;
             0) 
                 whiptail --msgbox "Cảm ơn bạn đã sử dụng!" 8 40
                 exit 0
